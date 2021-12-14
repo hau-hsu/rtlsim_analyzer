@@ -45,23 +45,23 @@ def parse_funcs(asm):
     >>> asm += ['00000000000100b0 <register_fini>:'         ]
     >>> asm += ['100b0:	00000793       	li	    a5,0'       ]
     >>> asm += ['100b4:	c791        	beqz	a5,100c0'   ]
+    >>> asm += ['100b6:	00000517       	auipc	a0,0x0'     ]
     >>> asm = iter(asm)
     >>> parse_funcs(asm)
-    {(65712, 65716): 'register_fini'}
+    {(65712, 65718): 'register_fini'}
     """
 
     range2func = RangeDict()
     re_func_begin = re.compile(r'^[0-9a-fA-F]+ <(?P<func>.+)>:')
-    while True:
-        try:
-            line = next(asm).strip()
-            m = re_func_begin.match(line)
-            if m:
-                func = m.group('func')
-                range_ = parse_addr_range(asm)
-                range2func[range_] = func
-        except StopIteration:
-            return range2func
+    for line in asm:
+        line = line.strip()
+        match = re_func_begin.match(line)
+        if match:
+            func = match.group('func')
+            range_ = parse_addr_range(asm)
+            range2func[range_] = func
+
+    return range2func
 
 
 def parse_addr_range(asm):
@@ -76,23 +76,20 @@ def parse_addr_range(asm):
     """
     re_inst = re.compile(r'\s*(?P<addr>[0-9a-fA-F]+):.+')
     cur = next(asm).strip()
-    m = re_inst.match(cur)
-    if not m:
+    match = re_inst.match(cur)
+    if not match:
         print(f"Cannot parse the first line of function: {cur}")
         sys.exit(1)
-    low_addr = int(m.group('addr'), 16)
+    low_addr = int(match.group('addr'), 16)
 
-    while True:
-        prev = cur
-        try:
-            cur = next(asm).strip()
-            if cur == '':  # end of function
-                break
-        except StopIteration:
+    prev = cur
+    for cur in asm:
+        if cur == '':  # end of function
             break
+        prev = cur
 
-    m = re_inst.match(prev)
-    high_addr = int(m.group('addr'), 16)
+    match = re_inst.match(prev)
+    high_addr = int(match.group('addr'), 16)
     return (low_addr, high_addr)
 
 def main():
