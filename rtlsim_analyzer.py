@@ -34,7 +34,7 @@ def process_elf(objdump, elf_file):
     "Get function address ranges form ELF."
     disasm_cmd = split(f"{objdump} -d {elf_file}")
     asm = run(disasm_cmd, check=True, capture_output=True, text=True).stdout
-    asm = iter(asm.split('\n'))
+    asm = asm.split('\n')
     return parse_funcs(asm)
 
 
@@ -51,6 +51,7 @@ def parse_funcs(asm):
     {(65712, 65718): 'register_fini'}
     """
 
+    asm = iter(asm)
     range2func = RangeDict()
     re_func_begin = re.compile(r'^[0-9a-fA-F]+ <(?P<func>.+)>:')
     for line in asm:
@@ -66,6 +67,7 @@ def parse_funcs(asm):
 
 def parse_addr_range(asm):
     """Parse functions from disassembled strings.
+
     Example:
     >>> asm = []
     >>> asm += ["125c8:	0005b383          	ld	t2,0(a1)"]
