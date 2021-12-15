@@ -7,9 +7,13 @@ $ python3 -m doctest rtlsim_analyzer.py
 import sys
 import re
 import argparse
-from subprocess import run
+from subprocess import run, PIPE
 from shlex import split
+from collections import defaultdict
+import logging
+import json
 
+HEX_CHAR = r'[0-9a-fA-f]'
 
 class RangeDict(dict):
     """The key of the dict is a range. For example:
@@ -23,7 +27,7 @@ class RangeDict(dict):
     def __getitem__(self, item):
         if not (isinstance(item, tuple) and len(item) == 2):
             for key in self:
-                if key[0] <= item < key[1] :
+                if key[0] <= item <= key[1] :
                     return self[key]
             raise KeyError(item)
 
@@ -33,7 +37,8 @@ class RangeDict(dict):
 def process_elf(objdump, elf_file):
     "Get function address ranges form ELF."
     disasm_cmd = split(f"{objdump} -d {elf_file}")
-    asm = run(disasm_cmd, check=True, capture_output=True, text=True).stdout
+    asm = run(disasm_cmd, check=True, stdout=PIPE,
+              universal_newlines=True).stdout
     asm = asm.split('\n')
     return parse_funcs(asm)
 
@@ -52,17 +57,17 @@ def parse_funcs(asm):
     """
 
     asm = iter(asm)
-    range2func = RangeDict()
-    re_func_begin = re.compile(r'^[0-9a-fA-F]+ <(?P<func>.+)>:')
+    addr2func = RangeDict()
+    re_func_begin = re.compile(fr'^{HEX_CHAR}+ <(?P<func>.+)>:')
     for line in asm:
         line = line.strip()
         match = re_func_begin.match(line)
         if match:
             func = match.group('func')
             range_ = parse_addr_range(asm)
-            range2func[range_] = func
+            addr2func[range_] = func
 
-    return range2func
+    return addr2func
 
 
 def parse_addr_range(asm):
@@ -76,7 +81,7 @@ def parse_addr_range(asm):
     >>> parse_addr_range(asm)
     (75208, 75212)
     """
-    re_inst = re.compile(r'\s*(?P<addr>[0-9a-fA-F]+):.+')
+    re_inst = re.compile(fr'\s*(?P<addr>{HEX_CHAR}+):.+')
     cur = next(asm).strip()
     match = re_inst.match(cur)
     if not match:
@@ -86,13 +91,34 @@ def parse_addr_range(asm):
 
     prev = cur
     for cur in asm:
-        if cur == '':  # end of function
+        cur = cur.strip()
+        if cur == '' or cur == '...':  # end of function
             break
         prev = cur
 
     match = re_inst.match(prev)
     high_addr = int(match.group('addr'), 16)
     return (low_addr, high_addr)
+
+
+def analysis_rtlsim(logfile, addr2func):
+    func_statistic = defaultdict(int)
+    re_one_cycle = re.compile(fr'^C.+pc=\[(?P<pc>{HEX_CHAR}+?)\].+')
+    with open(logfile) as log:
+        for line in log:
+            match = re_one_cycle.match(line)
+            if match:
+                pc = int(match.group('pc'), 16)
+                try:
+                    func = addr2func[pc]
+                    func_statistic[func] += 1
+
+                except KeyError:
+                    logging.warning("Cannot decode address: %d", pc)
+
+    return func_statistic
+
+
 
 def main():
     """Main"""
@@ -106,7 +132,11 @@ def main():
     args = argparser.parse_args()
 
 
-    print(process_elf(args.objdump, args.elf_file))
+    addr2func = process_elf(args.objdump, args.elf_file)
+    #print(addr2func)
+    func_cnt = analysis_rtlsim(args.rtlsim_log, addr2func)
+    print(json.dumps(func_cnt, indent=4))
+
 
 
 if __name__ == "__main__":
